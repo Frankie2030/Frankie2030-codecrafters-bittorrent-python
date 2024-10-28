@@ -1,32 +1,36 @@
 import json
 import sys
 import bencodepy
-# import bencodepy - available if you need it!
-# import requests - available if you need it!
-# Examples:
-#
-# - decode_bencode(b"5:hello") -> b"hello"
-# - decode_bencode(b"10:hello12345") -> b"hello12345"
-bc = bencodepy.Bencode(encoding="utf-8")
+
 def decode_bencode(bencoded_value):
-    return bc.decode(bencoded_value)
+    return bencodepy.decode(bencoded_value)
+
+def bytes_to_str(data):
+    if isinstance(data, bytes):
+        return data.decode()
+    elif isinstance(data, dict):
+        return {bytes_to_str(key): bytes_to_str(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [bytes_to_str(item) for item in data]
+    else:
+        return data
+
 def main():
     command = sys.argv[1]
-    # You can use print statements as follows for debugging, they'll be visible when running tests.
-    # print("Logs from your program will appear here!")
     if command == "decode":
         bencoded_value = sys.argv[2].encode()
-        # json.dumps() can't handle bytes, but bencoded "strings" need to be
-        # bytestrings since they might contain non utf-8 characters.
-        #
-        # Let's convert them to strings for printing to the console.
-        def bytes_to_str(data):
-            if isinstance(data, bytes):
-                return data.decode()
-            raise TypeError(f"Type not serializable: {type(data)}")
-        # Uncomment this block to pass the first stage
-        print(json.dumps(decode_bencode(bencoded_value), default=bytes_to_str))
+        print(json.dumps(bytes_to_str(decode_bencode(bencoded_value))))
+    elif command == "info":
+        torrent_file_path = sys.argv[2]
+        with open(torrent_file_path, "rb") as file:
+            bencoded_data = file.read()
+            decoded_data = decode_bencode(bencoded_data)
+            tracker_url = decoded_data[b"announce"].decode("utf-8")
+            length = decoded_data[b"info"][b"length"]
+            print(f"Tracker URL: {tracker_url}")
+            print(f"Length: {length}")
     else:
         raise NotImplementedError(f"Unknown command {command}")
+
 if __name__ == "__main__":
     main()
