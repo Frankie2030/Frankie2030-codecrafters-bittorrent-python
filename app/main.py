@@ -26,6 +26,7 @@ def main():
         with open(torrent_file_path, "rb") as file:
             bencoded_data = file.read()
             decoded_data = decode_bencode(bencoded_data)
+            #data = bytes_to_str(decoded_data)
             tracker_url = decoded_data[b"announce"].decode()
             length = decoded_data[b"info"][b"length"]
             info_dict = decoded_data[b"info"]
@@ -34,6 +35,10 @@ def main():
             print(f"Tracker URL: {tracker_url}")
             print(f"Length: {length}")
             print(f"Info Hash: {info_hash}")
+            print(f'Piece Length: {decoded_data[b"info"][b"piece length"]}')
+            print(f"Piece Hashes: ")
+            for i in range(0, len(decoded_data[b"info"][b"pieces"]), 20):
+                print(decoded_data[b"info"][b"pieces"][i : i + 20].hex())
     else:
         raise NotImplementedError(f"Unknown command {command}")
 
