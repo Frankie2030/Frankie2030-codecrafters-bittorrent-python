@@ -6,6 +6,7 @@ import struct
 import math
 import socket
 import requests
+import os
 
 
 def decode_bencode(bencoded_value):
@@ -122,7 +123,7 @@ def receive_message(s):
         message += s.recv(int.from_bytes(length) - len(message))
     return length + message
 
-def handle_download_command(output_file, torrent_file_path, piece_index):
+def handle_download_piece_command(output_file, torrent_file_path, piece_index):
     piece_index = int(piece_index)
     bencoded_data = read_torrent_file(torrent_file_path)
     decoded_data = decode_bencode(bencoded_data)
@@ -157,12 +158,8 @@ def handle_download_command(output_file, torrent_file_path, piece_index):
             begin = 2**14 * block_index
             print(f"begin: {begin}")
             block_length = min(piece_length - begin, 2**14)
-            print(
-                f"Requesting block {block_index + 1} of {number_of_blocks} with length {block_length}"
-            )
-            request_payload = struct.pack(
-                ">IBIII", 13, 6, piece_index, begin, block_length
-            )
+            print(f"Requesting block {block_index + 1} of {number_of_blocks} with length {block_length}")
+            request_payload = struct.pack(">IBIII", 13, 6, piece_index, begin, block_length)
             print("Requesting block, with payload:")
             print(request_payload)
             print(struct.unpack(">IBIII", request_payload))
@@ -177,6 +174,21 @@ def handle_download_command(output_file, torrent_file_path, piece_index):
             f.write(data)
     finally:
         s.close()
+    return output_file
+
+def handle_download_command(outputfile, torrent_file_path):
+    bencoded_data = read_torrent_file(torrent_file_path)
+    decoded_data = decode_bencode(bencoded_data)
+    total_pieces = len(extract_pieces_hashes(decoded_data[b"info"][b"pieces"]))
+    piecefiles = []
+    for piece in range(0, total_pieces):
+        o = handle_download_piece_command("/tmp/test-" + str(piece), outputfile, piece)
+        piecefiles.append(o)
+    with open(outputfile, "ab") as result_file:
+        for piecefile in piecefiles:
+            with open(piecefile, "rb") as piece_file:
+                result_file.write(piece_file.read())
+            os.remove(piecefile)
 
 def main():
     command = sys.argv[1]
@@ -189,7 +201,9 @@ def main():
     elif command == "handshake":
         handle_handshake_command(sys.argv[2], sys.argv[3])
     elif command == "download_piece":
-        handle_download_command(sys.argv[3], sys.argv[4], sys.argv[5])
+        handle_download_piece_command(sys.argv[3], sys.argv[4], sys.argv[5])
+    elif command == "download":
+        handle_download_command(sys.argv[3], sys.argv[4])
     else:
         raise NotImplementedError(f"Unknown command {command}")
 
