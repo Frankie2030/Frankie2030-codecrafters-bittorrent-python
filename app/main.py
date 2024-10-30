@@ -299,7 +299,7 @@ def handle_magnet_handshake(magnet_link):
     s.recv(1)
     s.recv(payload_size)
 
-    length, msg = receive_message(s)
+    msg = receive_message(s)
     print(msg)
     dic = bencodepy.decode(msg[2:])
     print(f"receive dict {dic}")
