@@ -9,7 +9,6 @@ import requests
 import os
 from urllib.parse import unquote
 
-
 def decode_bencode(bencoded_value):
     return bencodepy.decode(bencoded_value)
 
