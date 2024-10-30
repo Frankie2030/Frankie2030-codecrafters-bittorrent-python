@@ -122,10 +122,12 @@ def receive_message(s):
     length = s.recv(4)
     while not length or not int.from_bytes(length):
         length = s.recv(4)
+        print("hello")
     message = s.recv(int.from_bytes(length))
     # If we didn't receive the full message for some reason, keep gobbling.
     while len(message) < int.from_bytes(length):
         message += s.recv(int.from_bytes(length) - len(message))
+        print("hello3")
     return length + message
 
 def handle_download_piece_command(output_file, torrent_file_path, piece_index):
@@ -300,7 +302,6 @@ def handle_magnet_handshake(magnet_link):
     s.recv(payload_size)
 
     msg = receive_message(s)
-    print("hello")
     print(msg)
     dic = decode_bencode(msg[2:])
     print(f"receive dict {dic}")
