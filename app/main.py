@@ -288,7 +288,6 @@ def handle_magnet_handshake(magnet_link):
     s.recv(4)
     s.recv(1)
     s.recv(4)
-    print("hello")
     magnet_dict = {"m": {"ut_metadata": 18}}
     encoded_magnet_dict = bencodepy.encode(magnet_dict)
     s.sendall(integer_to_byte(len(encoded_magnet_dict) + 2))
@@ -300,9 +299,8 @@ def handle_magnet_handshake(magnet_link):
     s.recv(1)
     s.recv(payload_size)
 
-    print("hello")
-
     msg = receive_message(s)
+    print("hello")
     print(msg)
     dic = decode_bencode(msg[2:])
     print(f"receive dict {dic}")
