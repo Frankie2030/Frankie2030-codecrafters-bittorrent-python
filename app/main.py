@@ -7,6 +7,7 @@ import math
 import socket
 import requests
 import os
+from urllib.parse import unquote
 
 
 def decode_bencode(bencoded_value):
@@ -197,6 +198,17 @@ def handle_download_command(output_file, torrent_file_path):
         f.write(torrent_data)
     print(f"Download complete. File saved as {output_file}")
 
+def parse_magnet_link(magnet_link):
+    query_params = magnet_link[8:].split("&")
+    params = dict()
+    for p in query_params:
+        key, value = p.split("=")
+        params[key] = value
+    info_hash = params["xt"][9:]
+    tracker_url = unquote(params["tr"])
+    print(f"Tracker URL: {tracker_url}")
+    print(f"Info Hash: {info_hash}")
+
 def main():
     command = sys.argv[1]
     if command == "decode":
@@ -211,6 +223,8 @@ def main():
         handle_download_piece_command(sys.argv[3], sys.argv[4], sys.argv[5])
     elif command == "download":
         handle_download_command(sys.argv[3], sys.argv[4])
+    elif command == "magnet_parse":
+        parse_magnet_link(sys.argv[2])
     else:
         raise NotImplementedError(f"Unknown command {command}")
 
