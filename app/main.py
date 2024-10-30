@@ -156,17 +156,17 @@ def handle_download_piece_command(output_file, torrent_file_path, piece_index):
         data = bytearray()
         for block_index in range(number_of_blocks):
             begin = 2**14 * block_index
-            print(f"begin: {begin}")
+            #print(f"begin: {begin}")
             block_length = min(piece_length - begin, 2**14)
-            print(f"Requesting block {block_index + 1} of {number_of_blocks} with length {block_length}")
+            #print(f"Requesting block {block_index + 1} of {number_of_blocks} with length {block_length}")
             request_payload = struct.pack(">IBIII", 13, 6, piece_index, begin, block_length)
-            print("Requesting block, with payload:")
-            print(request_payload)
-            print(struct.unpack(">IBIII", request_payload))
-            print(int.from_bytes(request_payload[:4]))
-            print(int.from_bytes(request_payload[4:5]))
-            print(int.from_bytes(request_payload[5:9]))
-            print(int.from_bytes(request_payload[17:21]))
+            # print("Requesting block, with payload:")
+            # print(request_payload)
+            # print(struct.unpack(">IBIII", request_payload))
+            # print(int.from_bytes(request_payload[:4]))
+            # print(int.from_bytes(request_payload[4:5]))
+            # print(int.from_bytes(request_payload[5:9]))
+            # print(int.from_bytes(request_payload[17:21]))
             s.sendall(request_payload)
             message = receive_message(s)
             data.extend(message[13:])
@@ -174,21 +174,28 @@ def handle_download_piece_command(output_file, torrent_file_path, piece_index):
             f.write(data)
     finally:
         s.close()
-    return output_file
+    return data
 
-def handle_download_command(outputfile, torrent_file_path):
+def handle_download_command(output_file, torrent_file_path):
     bencoded_data = read_torrent_file(torrent_file_path)
     decoded_data = decode_bencode(bencoded_data)
-    total_pieces = len(extract_pieces_hashes(decoded_data[b"info"][b"pieces"]))
-    piecefiles = []
-    for piece in range(0, total_pieces):
-        o = handle_download_piece_command("/tmp/test-" + str(piece), outputfile, piece)
-        piecefiles.append(o)
-    with open(outputfile, "ab") as result_file:
-        for piecefile in piecefiles:
-            with open(piecefile, "rb") as piece_file:
-                result_file.write(piece_file.read())
-            os.remove(piecefile)
+    num_pieces = len(extract_pieces_hashes(decoded_data[b"info"][b"pieces"]))
+    
+    torrent_data = bytearray()
+
+    # Step 5: Loop through each piece and download it
+    for piece_index in range(num_pieces):
+        #print(f"Downloading piece {piece_index + 1} of {num_pieces}")
+        # Use handle_download_piece_command to download each piece
+        piece_data = handle_download_piece_command(output_file, torrent_file_path, piece_index)
+        
+        # Extend the torrent data with the piece data
+        torrent_data.extend(piece_data)
+
+    # Step 6: Write the assembled data to the output file
+    with open(output_file, "wb") as f:
+        f.write(torrent_data)
+    print(f"Download complete. File saved as {output_file}")
 
 def main():
     command = sys.argv[1]
