@@ -3,12 +3,14 @@ import sys
 import bencodepy
 import hashlib
 import struct
+import math
 import socket
 import requests
-import math
+
 
 def decode_bencode(bencoded_value):
     return bencodepy.decode(bencoded_value)
+
 
 def bytes_to_str(data):
     if isinstance(data, bytes):
@@ -19,87 +21,132 @@ def bytes_to_str(data):
         return [bytes_to_str(item) for item in data]
     else:
         return data
-    
-def extract_info_hash(bencoded_value):
-    _, bencoded_value_from_info = bencoded_value.split(b"info")
-    dict_length = decode_bencode(bencoded_value_from_info)
-    return bencoded_value_from_info[:dict_length]
+
+
+def read_torrent_file(file_path):
+    with open(file_path, "rb") as file:
+        return file.read()
+
+
+def get_info_hash(info_dict):
+    bencoded_info = bencodepy.encode(info_dict)
+    return hashlib.sha1(bencoded_info).hexdigest()
+
+
+def print_torrent_info(decoded_data):
+    tracker_url = decoded_data[b"announce"].decode()
+    length = decoded_data[b"info"][b"length"]
+    info_hash = get_info_hash(decoded_data[b"info"])
+    piece_length = decoded_data[b"info"][b"piece length"]
+    pieces = decoded_data[b"info"][b"pieces"]
+
+    print(f"Tracker URL: {tracker_url}")
+    print(f"Length: {length}")
+    print(f"Info Hash: {info_hash}")
+    print(f"Piece Length: {piece_length}")
+    print(f"Piece Hashes: {extract_pieces_hashes(pieces)}")
+
 def extract_pieces_hashes(pieces_hashes):
     index, result = 0, []
     while index < len(pieces_hashes):
         result.append(pieces_hashes[index : index + 20].hex())
         index += 20
     return result
-def get_peers(decoded_data, info_hash):
+
+
+def handle_decode_command(bencoded_value):
+    print(json.dumps(bytes_to_str(decode_bencode(bencoded_value.encode()))))
+
+
+def handle_info_command(torrent_file_path):
+    bencoded_data = read_torrent_file(torrent_file_path)
+    decoded_data = decode_bencode(bencoded_data)
+    print_torrent_info(decoded_data)
+
+def get_peers(decoded_data):
+    tracker_url = decoded_data[b"announce"].decode()
+    info_hash = hashlib.sha1(bencodepy.encode(decoded_data[b"info"])).digest()
     params = {
         "info_hash": info_hash,
-        "peer_id": "PC0001-7694471987235",
+        "peer_id": "IloveQBitTorrent2030",
         "port": 6881,
         "uploaded": 0,
         "downloaded": 0,
-        "left": decoded_data["info"]["length"],
+        "left": decoded_data[b"info"][b"length"],
         "compact": 1,
     }
-    response = requests.get(decoded_data["announce"].decode(), params=params)
-    return decode_peers(decode_bencode(response.content)[0]["peers"])
-def decode_peers(peers):
-    index, result = 0, []
-    while index < len(peers):
-        ip = ".".join([str(peers[index + offset]) for offset in range(4)])
-        # The port is encoded as a 16-bit big-endian integer.
-        # So, we need to multiply the first byte by 256 and add the second byte.
-        port = peers[index + 4] * 256 + peers[index + 5]
-        result.append(f"{ip}:{port}")
-        index += 6
-    return result
-def get_peer_id(ip, port, info_hash):
-    protocol_name_length = struct.pack(">B", 19)
-    protocol_name = b"BitTorrent protocol"
-    reserved_bytes = b"\x00" * 8
-    peer_id = b"PC0001-7694471987235"
-    payload = (
-        protocol_name_length + protocol_name + reserved_bytes + info_hash + peer_id
-    )
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.connect((ip, port))
-        sock.sendall(payload)
-        response = sock.recv(1024)
-        return response[48:].hex()
-    finally:
-        sock.close()
+    response = requests.get(tracker_url, params=params)
+    response_dict = decode_bencode(response.content)
+    peers = response_dict[b"peers"]
+    peer_list = []
+    for i in range(0, len(peers), 6):
+        ip = ".".join(str(b) for b in peers[i : i + 4])
+        port = struct.unpack("!H", peers[i + 4 : i + 6])[0]
+        peer_list.append((ip, port))
+    return peer_list
 
+def handle_peers_command(torrent_file_path):
+    bencoded_data = read_torrent_file(torrent_file_path)
+    decoded_data = decode_bencode(bencoded_data)
+    peer_list = get_peers(decoded_data)
+    for peer in peer_list:
+        print(f"Peer: {peer[0]}:{peer[1]}")
 
-def download_piece(decoded_data, info_hash, piece_index, output_file):
-    peers = get_peers(decoded_data, info_hash)
-    peer_ip, peer_port = peers[0].split(":")
-    peer_port = int(peer_port)
-    get_peer_id(peer_ip, peer_port, info_hash)
-    protocol_name_length = struct.pack(">B", 19)
-    protocol_name = b"BitTorrent protocol"
-    reserved_bytes = b"\x00" * 8
-    peer_id = b"PC0001-7694471987235"
-    payload = (
-        protocol_name_length + protocol_name + reserved_bytes + info_hash + peer_id
+def perform_handshake(decoded_data, ip, port):
+    info_hash = hashlib.sha1(bencodepy.encode(decoded_data[b"info"])).digest()
+    handshake = (
+        b"\x13BitTorrent protocol\x00\x00\x00\x00\x00\x00\x00\x00"
+        + info_hash
+        + b"IloveQBitTorrent2030"
     )
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((ip, int(port)))
+    s.send(handshake)
+    return s
+
+def handle_handshake_command(file_name, peer_address):
+    ip, port = peer_address.split(":")
+    bencoded_data = read_torrent_file(file_name)
+    parsed = decode_bencode(bencoded_data)
+    s = perform_handshake(parsed, ip, port)
+    peer_id = s.recv(68)[48:].hex()
+    print(f"Peer ID: {peer_id}")
+
+def receive_message(s):
+    length = s.recv(4)
+    while not length or not int.from_bytes(length):
+        length = s.recv(4)
+    message = s.recv(int.from_bytes(length))
+    # If we didn't receive the full message for some reason, keep gobbling.
+    while len(message) < int.from_bytes(length):
+        message += s.recv(int.from_bytes(length) - len(message))
+    return length + message
+
+def handle_download_command(output_file, torrent_file_path, piece_index):
+    piece_index = int(piece_index)
+    bencoded_data = read_torrent_file(torrent_file_path)
+    decoded_data = decode_bencode(bencoded_data)
+
+    # Get peers from tracker
+    peers = get_peers(decoded_data)
+    ip, port = peers[0]
+    
+    # Perform handshake with decoded data
+    s = perform_handshake(decoded_data, ip, port)
+
     try:
-        sock.connect((peer_ip, peer_port))
-        sock.sendall(payload)
-        response = sock.recv(68)
-        message = receive_message(sock)
+        response = s.recv(68)
+        message = receive_message(s)
         while int(message[4]) != 5:
-            message = receive_message(sock)
+            message = receive_message(s)
         interested_payload = struct.pack(">IB", 1, 2)
-        sock.sendall(interested_payload)
-        message = receive_message(sock)
+        s.sendall(interested_payload)
+        message = receive_message(s)
         while int(message[4]) != 1:
-            message = receive_message(sock)
-        file_length = decoded_data["info"]["length"]
-        total_number_of_pieces = len(
-            extract_pieces_hashes(decoded_data["info"]["pieces"])
-        )
-        default_piece_length = decoded_data["info"]["piece length"]
+            message = receive_message(s)
+        file_length = decoded_data[b"info"][b"length"]
+        total_number_of_pieces = len(extract_pieces_hashes(decoded_data[b"info"][b"pieces"]))
+        default_piece_length = decoded_data[b"info"][b"piece length"]
         if piece_index == total_number_of_pieces - 1:
             piece_length = file_length - (default_piece_length * piece_index)
         else:
@@ -123,108 +170,29 @@ def download_piece(decoded_data, info_hash, piece_index, output_file):
             print(int.from_bytes(request_payload[4:5]))
             print(int.from_bytes(request_payload[5:9]))
             print(int.from_bytes(request_payload[17:21]))
-            sock.sendall(request_payload)
-            message = receive_message(sock)
+            s.sendall(request_payload)
+            message = receive_message(s)
             data.extend(message[13:])
         with open(output_file, "wb") as f:
             f.write(data)
     finally:
-        sock.close()
-    return True
-def receive_message(s):
-    length = s.recv(4)
-    while not length or not int.from_bytes(length):
-        length = s.recv(4)
-    message = s.recv(int.from_bytes(length))
-    # If we didn't receive the full message for some reason, keep gobbling.
-    while len(message) < int.from_bytes(length):
-        message += s.recv(int.from_bytes(length) - len(message))
-    return length + message
+        s.close()
 
 def main():
     command = sys.argv[1]
     if command == "decode":
-        bencoded_value = sys.argv[2].encode()
-        print(json.dumps(bytes_to_str(decode_bencode(bencoded_value))))
+        handle_decode_command(sys.argv[2])
     elif command == "info":
-        torrent_file_path = sys.argv[2]
-        with open(torrent_file_path, "rb") as file:
-            bencoded_data = file.read()
-            decoded_data = decode_bencode(bencoded_data)
-            #data = bytes_to_str(decoded_data)
-            tracker_url = decoded_data[b"announce"].decode()
-            length = decoded_data[b"info"][b"length"]
-            info_dict = decoded_data[b"info"]
-            bencoded_info = bencodepy.encode(info_dict)
-            info_hash = hashlib.sha1(bencoded_info).hexdigest()
-            print(f"Tracker URL: {tracker_url}")
-            print(f"Length: {length}")
-            print(f"Info Hash: {info_hash}")
-            print(f'Piece Length: {decoded_data[b"info"][b"piece length"]}')
-            print(f"Piece Hashes: ")
-            for i in range(0, len(decoded_data[b"info"][b"pieces"]), 20):
-                print(decoded_data[b"info"][b"pieces"][i : i + 20].hex())
+        handle_info_command(sys.argv[2])
     elif command == "peers":
-        with open(sys.argv[2], "rb") as f:
-            bencoded_value = f.read()
-            decoded_data = decode_bencode(bencoded_value)
-            tracker_url = decoded_data[b"announce"].decode()
-            info_dict = decoded_data[b"info"]
-            bencoded_info = bencodepy.encode(info_dict)
-            info_hash = hashlib.sha1(bencoded_info).digest()
-            params = {
-                "info_hash": info_hash,
-                "peer_id": "IloveQBitTorrent2030",
-                "port": 6881,
-                "uploaded": 0,
-                "downloaded": 0,
-                "left": decoded_data[b"info"][b"length"],
-                "compact": 1,
-            }
-            response = requests.get(tracker_url, params=params)
-            response_dict = decode_bencode(response.content)
-            peers = response_dict[b"peers"]
-            for i in range(0, len(peers), 6):
-                ip = ".".join(str(b) for b in peers[i : i + 4])
-                port = struct.unpack("!H", peers[i + 4 : i + 6])[0]
-                print(f"Peer: {ip}:{port}")
+        handle_peers_command(sys.argv[2])
     elif command == "handshake":
-        file_name = sys.argv[2]
-        (ip, port) = sys.argv[3].split(":")
-        with open(file_name, "rb") as file:
-            parsed = decode_bencode(file.read())
-            info = parsed[b"info"]
-            bencoded_info = bencodepy.encode(info)
-            info_hash = hashlib.sha1(bencoded_info).digest()
-            handshake = (
-                b"\x13BitTorrent protocol\x00\x00\x00\x00\x00\x00\x00\x00"
-                + info_hash
-                + b"IloveQBitTorrent2030"
-            )
-            # make request to peer
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect((ip, int(port)))
-                s.send(handshake)
-                print(f"Peer ID: {s.recv(68)[48:].hex()}")
+        handle_handshake_command(sys.argv[2], sys.argv[3])
     elif command == "download_piece":
-        output_file = sys.argv[3]
-        piece_index = int(sys.argv[5])
-        torrent_file = sys.argv[4]
-        with open(torrent_file, "rb") as f:
-            torrent_data = f.read()
-            decoded_data = decode_bencode(torrent_data)[0]
-            if download_piece(
-                decoded_data,
-                hashlib.sha1(extract_info_hash(torrent_data)).digest(),
-                piece_index,
-                output_file,
-            ):
-                print(f"Piece {piece_index} downloaded to {output_file}.")
-            else:
-                raise RuntimeError("Failed to download piece")
-
+        handle_download_command(sys.argv[3], sys.argv[4], sys.argv[5])
     else:
         raise NotImplementedError(f"Unknown command {command}")
+
 
 if __name__ == "__main__":
     main()
