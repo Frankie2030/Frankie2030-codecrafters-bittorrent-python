@@ -13,6 +13,9 @@ from urllib.parse import unquote
 def decode_bencode(bencoded_value):
     return bencodepy.decode(bencoded_value)
 
+def url_encode(info_hash):
+    split_string = ''.join(['%' + info_hash[i:i+2] for i in range(0,len(info_hash),2)])
+    return split_string
 
 def bytes_to_str(data):
     if isinstance(data, bytes):
@@ -24,16 +27,19 @@ def bytes_to_str(data):
     else:
         return data
 
+def integer_to_byte(integer):
+    return struct.pack('>I', integer)
+
+def byte_to_integer(byte):
+    return struct.unpack('>I', byte)[0]
 
 def read_torrent_file(file_path):
     with open(file_path, "rb") as file:
         return file.read()
 
-
 def get_info_hash(info_dict):
     bencoded_info = bencodepy.encode(info_dict)
     return hashlib.sha1(bencoded_info).hexdigest()
-
 
 def print_torrent_info(decoded_data):
     tracker_url = decoded_data[b"announce"].decode()
@@ -55,10 +61,8 @@ def extract_pieces_hashes(pieces_hashes):
         index += 20
     return result
 
-
 def handle_decode_command(bencoded_value):
     print(json.dumps(bytes_to_str(decode_bencode(bencoded_value.encode()))))
-
 
 def handle_info_command(torrent_file_path):
     bencoded_data = read_torrent_file(torrent_file_path)
@@ -208,6 +212,93 @@ def parse_magnet_link(magnet_link):
     tracker_url = unquote(params["tr"])
     print(f"Tracker URL: {tracker_url}")
     print(f"Info Hash: {info_hash}")
+    return tracker_url, info_hash
+
+
+def ping_peer_magnet(peer_ip, peer_port, info_hash, peer_id, s):
+    info_hash = bytes.fromhex(info_hash)
+    s.connect((peer_ip,peer_port))
+        
+    protocol_length = 19
+    protocol_length_bytes = protocol_length.to_bytes(1,byteorder='big')
+    s.sendall(protocol_length_bytes)
+    
+    message = 'BitTorrent protocol'
+    s.sendall(message.encode('utf-8'))
+    
+    reserved_bytes = b'\x00\x00\x00\x00\x00\x10\x00\x00'
+    s.sendall(reserved_bytes)
+    
+    s.sendall(info_hash)
+    
+    s.sendall(peer_id.encode('utf-8'))
+    
+    s.recv(1)
+    s.recv(19)
+    s.recv(8)
+    s.recv(20)
+    return s.recv(20).hex()
+
+def get_peer_address_magnet(url, sha_info_hash):  
+    encoded_hash = url_encode(sha_info_hash)
+    peer_id = 'IloveQBitTorrent2030'
+    port = 6881
+    uploaded = 0
+    downloaded = 0
+    left = 999
+    compact = 1
+    
+    query_string = (
+        f"info_hash={encoded_hash}&"
+        f"peer_id={peer_id}&"
+        f"port={port}&"
+        f"uploaded={uploaded}&"
+        f"downloaded={downloaded}&"
+        f"left={left}&"
+        f"compact={compact}"
+    )
+    
+    complete_url = f"{url}?{query_string}"
+    r = requests.get(complete_url)
+    decoded_dict  = decode_bencode(r.content)
+    peers = decoded_dict[b"peers"]
+    decimal_values = [byte for byte in peers]
+    
+    ip_address_list = []
+    for i in range(0,len(decimal_values),6):
+        ip_address = '.'.join(str(num) for num in decimal_values[i:i+4])
+        ip_address += f":{int.from_bytes(decimal_values[i+4:i+6], byteorder='big', signed=False)}"
+        ip_address_list.append(ip_address)
+     
+    return ip_address_list
+
+def handle_magnet_handshake(magnet_link):
+    info_hash_location = magnet_link.find("btih:") + 5
+    info_hash = magnet_link[info_hash_location : info_hash_location + 40]
+    url_location = magnet_link.find("tr=") + 3
+    url = unquote(magnet_link[url_location:])
+    ip_addresses = get_peer_address_magnet(url, info_hash)
+    peer_ip, peer_port = ip_addresses[0].split(":")
+    peer_port = int(peer_port)
+    peer_id = "ILoveQBitTorrent2030"
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    response_peer_id = ping_peer_magnet(peer_ip, peer_port, info_hash, peer_id, s)
+    print(f"Peer ID: {response_peer_id}")
+    # Bitfield
+    s.recv(4)
+    s.recv(1)
+    s.recv(4)
+    magnet_dict = {"m": {"ut_metadata": 18}}
+    encoded_magnet_dict = bencodepy.encode(magnet_dict)
+    s.sendall(integer_to_byte(len(encoded_magnet_dict) + 2))
+    s.sendall(b"\x14")
+    s.sendall(b"\x00")
+    s.sendall(encoded_magnet_dict)
+    payload_size = byte_to_integer(s.recv(4)) - 2
+    s.recv(1)
+    s.recv(1)
+    s.recv(payload_size)
+
 
 def main():
     command = sys.argv[1]
@@ -225,6 +316,8 @@ def main():
         handle_download_command(sys.argv[3], sys.argv[4])
     elif command == "magnet_parse":
         parse_magnet_link(sys.argv[2])
+    elif command == "magnet_handshake":
+        handle_magnet_handshake(sys.argv[2])
     else:
         raise NotImplementedError(f"Unknown command {command}")
 
