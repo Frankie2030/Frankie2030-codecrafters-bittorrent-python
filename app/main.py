@@ -139,8 +139,8 @@ def get_peers_real(info_hash, decoded_content, peer_id, port):
         "port": port,
         "uploaded": 0,
         "downloaded": 0,
-        "left": decoded_content["info"]["length"],
-        "left": decoded_content["info"]["length"]
+        "left": decoded_content[b"info"][b"length"],
+        "left": decoded_content[b"info"][b"length"]
         if decoded_content.get("info") is not None
         else decoded_content["length"],
         "compact": 1,
